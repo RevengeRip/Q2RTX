@@ -50,6 +50,7 @@ with this program; if not, write to the Free Software Foundation, Inc.,
 #include <stdlib.h>
 #include <string.h>
 #include <assert.h>
+#include <vulkan/vulkan_core.h>
 
 cvar_t *cvar_profiler = NULL;
 cvar_t *cvar_profiler_samples = NULL;
@@ -411,6 +412,7 @@ QVK_t qvk = {
 LIST_EXTENSIONS_ACCEL_STRUCT
 LIST_EXTENSIONS_RAY_PIPELINE
 LIST_EXTENSIONS_DEBUG
+LIST_EXTENSIONS_HDR_METADATA
 LIST_EXTENSIONS_INSTANCE
 #undef VK_EXTENSION_DO
 
@@ -467,7 +469,8 @@ static const char *optional_instance_extension_name[NUM_OPTIONAL_INSTANCE_EXTENS
 #define OPTIONAL_DEVICE_EXTENSIONS					\
 	VK_OPT_EXT_DO(VK_KHR_LINE_RASTERIZATION)		\
 	VK_OPT_EXT_DO(VK_KHR_SHADER_NON_SEMANTIC_INFO)	\
-	VK_OPT_EXT_DO(VK_EXT_DEBUG_MARKER)
+	VK_OPT_EXT_DO(VK_EXT_DEBUG_MARKER)				\
+	VK_OPT_EXT_DO(VK_EXT_HDR_METADATA)
 
 enum optional_device_extension_id
 {
@@ -622,6 +625,30 @@ static bool pick_surface_format_sdr(picked_surface_format_t* picked_fmt, const V
 	return false;
 }
 
+static void
+set_hdr_metadata(void)
+{
+	if (!qvk.surf_is_hdr || !qvkSetHdrMetadataEXT)
+		return;
+
+	const float peak_nits = cvar_tm_hdr_peak_nits->value;
+	const float average_nits = cvar_ui_hdr_nits->value;
+
+	const VkHdrMetadataEXT metadata = {
+		.sType                     = VK_STRUCTURE_TYPE_HDR_METADATA_EXT,
+		.displayPrimaryRed   = { 0.640f, 0.330f },
+		.displayPrimaryGreen = { 0.300f, 0.600f },
+		.displayPrimaryBlue  = { 0.150f, 0.060f },
+		.whitePoint                = { 0.3127f, 0.3290f }, /* D65 */
+		.maxLuminance              = peak_nits,
+		.minLuminance              = 0.0f,
+		.maxContentLightLevel      = peak_nits,
+		.maxFrameAverageLightLevel = average_nits,
+	};
+
+	qvkSetHdrMetadataEXT(qvk.device, 1, &qvk.swap_chain, &metadata);
+}
+
 VkResult
 create_swapchain(void)
 {
@@ -731,6 +758,8 @@ create_swapchain(void)
 		Com_EPrintf("error creating swapchain\n");
 		return 1;
 	}
+
+	set_hdr_metadata();
 
 	vkGetSwapchainImagesKHR(qvk.device, qvk.swap_chain, &qvk.num_swap_chain_images, NULL);
 	assert(qvk.num_swap_chain_images);
@@ -1493,6 +1522,11 @@ init_vulkan(void)
 		LIST_EXTENSIONS_DEBUG
 	}
 
+	if(available_optional_device_extensions[OPT_EXT_VK_EXT_HDR_METADATA])
+	{
+		LIST_EXTENSIONS_HDR_METADATA
+	}
+
 #undef VK_EXTENSION_DO
 
 	Com_Printf("-----------------------\n");
@@ -1660,6 +1694,7 @@ destroy_vulkan(void)
 	LIST_EXTENSIONS_ACCEL_STRUCT
 	LIST_EXTENSIONS_RAY_PIPELINE
 	LIST_EXTENSIONS_DEBUG
+	LIST_EXTENSIONS_HDR_METADATA
 	LIST_EXTENSIONS_INSTANCE
 #undef VK_EXTENSION_DO
 
@@ -3900,6 +3935,7 @@ R_Init_RTX(bool total)
 	cvar_pt_num_bounce_rays->flags |= CVAR_ARCHIVE;
 
 	cvar_ui_hdr_nits = Cvar_Get("ui_hdr_nits", "300", 0);
+	cvar_tm_hdr_peak_nits = Cvar_Get("tm_hdr_peak_nits", "1000", 0);
 
 	qvk.draw_width  = r_config.width;
 	qvk.draw_height = r_config.height;
